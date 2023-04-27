@@ -1,0 +1,381 @@
+---
+title: "mgt556_hw4"
+author: "Xuejia Tong"
+date: "2023-02-26"
+output:
+  pdf_document: default
+  html_document: default
+---
+
+The BookBinders Book Club (BBB) was established in 1986 for the purpose of selling specialty books through direct marketing. While sales have grown steadily, profits began falling when the database got larger and when the number of offers sent to customers got larger.
+
+In order to improve BBB’s mailing yields and profits, both RFM analysis and Logistic regression are used in this assignment to predict customer behavior.
+
+The company currently has 550,000 customers who are being mailed catalogs. The data set contains the responses of a random sample of 50,000 customers to a new offering from BBB titled “The Art History of Florence.
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+First, we load the packages and the BBB data.
+```{r, message=FALSE}
+# Load packages
+
+# Package for calculating marginal effects
+#install.packages("mfx")
+
+# Package for model fit (Pseudo R2)
+#install.packages("rcompanion")
+
+library(ggplot2)
+library(stargazer)
+library(psych)
+library(mfx)
+library(rcompanion)
+library(scales) # for percent() function
+```
+
+# Part I Logistic Regression
+## Q1. Estimate a logistic regression model using “buyer” as the dependent variable and the following as explanatory variables:
+last, purch, total, gender, child, youth, cook, doit, reference, art.
+
+```{r}
+bbb <- read.csv("~/data/BBB_post.csv")
+table(bbb$buyer)
+
+logit_buyer <- glm(buyer ~ last + purch + total + gender + child + youth + cook + doit + reference + art, family = binomial, data = bbb)
+
+# Report the results
+stargazer(logit_buyer, type="text")
+```
+ 
+Yes, we get coefficient for every independent variables, and all coefficients are statistically significant under a p-value of 0.01.
+ 
+After estimating the logistic regression model, we can create a new variable that contains the predicted probability of purchase and plot a histogram for the predicted probability of consumers in the dataset:
+```{r}
+bbb$buyer_logit = predict(logit_buyer,type="response")
+ggplot(data = bbb, aes(x = buyer_logit))+
+  geom_histogram(col="white", bins=40)+
+  labs(x="Predicted Buyer Prob",title="Logit Model Fit")
+```
+ 
+The histogram is right skewed and most customers are predicted to have purchase probability less than 10%.
+ 
+## Q2. Summarize and interpret the results (so that a marketing manager can understand them). Which variables are significant? Which seem to be economically “important”? Interpret the economic importance for some of the explanatory variables.
+
+```{r}
+# use logitmfx() to calculate Average Marginal Effects
+mfx <- logitmfx(buyer ~ last + purch + total + gender + child + youth + cook + doit + reference + art, data = bbb, atmean=F)
+
+mfx$mfxest
+```
+The results above show the marginal effect *at mean* of explanatory variables on the probability of purchase. All coefficients appear to be statistically significant since the p-values are much smaller than 0.05. 
+
+Looking at the magnitude of the coefficients, the "last" (how long since customer’s last purchase) and the "total" (total \$ spent) variables have the smallest effect. This does not necessarily mean that they are not economically significant, because the the units of 1 day and 1 dollar spent are so tiny.
+
+Among the variables measuring the the # of books purchased in each category, only the coefficient of "art" is positive. One unit increase in the number of books purchased in the art category is correlated with 3.9% of increase in the probability of purchase; on the other hand, customers buying more books in other categories (children, youth, cooking, doit, and reference) have lower probability of purchase. This makes sense because the dataset evaluates customers' responses to the offering of “The Art History of Florence,” so customers interested in art are more likely to respond.
+
+## Q3. Check the overall classification performance of the logistic regression model above. Create a table showing the fraction of observations which are correctly predicted by the model.
+```{r}
+# Logistic regression classification
+table(bbb$buyer, bbb$buyer_logit > 0.5)
+(logit_class <- prop.table(table(bbb$buyer, bbb$buyer_logit > 0.5)))
+
+percent(tr(logit_class), accuracy=0.01)
+```
+
+About 91.62% of the observations are correctly predicted by the logistic regression model.
+
+Also, the model makes better prediction for non-buyers:
+* 45126 / (45126+352) = 99.23% of non-buyers are accurately predicted
+* only 684 / (3838+684) = 15.12% of actual buyers are accurately predicted.
+
+# Part II. RFM Analysis
+## Q4. Create the R-index based on last, the F-index based on purch, and the M-index based on total. Report the average probability of purchase (i.e., mean of buyer) for each quintile for each index. Make sure that group 1 is always the best group and group 5 is the worst group.
+
+### Create quintiles:
+```{r}
+# Create recency quintile
+bbb$rec_iq <-.bincode(bbb$last, quantile(bbb$last, probs = seq(0, 1, 0.2)), right = TRUE, include.lowest = TRUE)
+
+# Create frequency quintile
+bbb$freq_iq <-.bincode(bbb$purch, quantile(bbb$purch, probs = seq(0, 1, 0.2)), right = TRUE, include.lowest = TRUE)
+bbb$freq_iq <- 6 - bbb$freq_iq
+
+# Create monetary quintile
+bbb$money_iq <-.bincode(bbb$total, quantile(bbb$total, probs = seq(0, 1, 0.2)), right = TRUE, include.lowest = TRUE)
+bbb$money_iq <- 6 - bbb$money_iq
+```
+
+We can then use bar chart to check that group 1 is the best group for each index.
+```{r, warning=FALSE}
+# "last" by recency quintile
+ggplot(data=bbb, aes(x=rec_iq, y=last)) + 
+  geom_bar(stat = "summary", fun = "mean") + 
+  labs(y="days since customer’s last purchase")
+
+# "purch" by frequency quintile
+ggplot(data=bbb, aes(x=freq_iq, y=purch)) + 
+  geom_bar(stat = "summary", fun = "mean") + 
+  labs(y=" # of books purchased")
+
+# "total" by monetary quintile
+ggplot(data=bbb, aes(x=money_iq, y=total)) + 
+  geom_bar(stat = "summary", fun = "mean") + 
+  labs(y="total $ spent")
+```
+
+Notice that there are only 4 groups for the frequency index, which we have discussed in previous class. As shown in the histogram below, most customers are buying fewer than 3 books and the distribution is very skewed, so it is not possible to split customers into 5 groups.
+
+```{r}
+# Histogram of purch to see why there are only 4 groups
+ggplot(data=bbb, aes(x=purch)) + geom_histogram()
+```
+### Report average probability of purchase for each quintile:
+```{r}
+# Average prob by Recency quintile
+tapply(bbb$buyer, bbb$rec_iq, mean)
+
+# Average prob by Frequency quintile
+tapply(bbb$buyer, bbb$freq_iq, mean)
+
+# Average prob by Monetary quintile
+tapply(bbb$buyer, bbb$money_iq, mean)
+```
+The results above confirms that the group 1 is the "best" group for each index. The average probability of purchase decreases from group 1 to group 5.
+
+## Q5. Create a 3 digit RFM index for each customer and calculate the average purchase probability for each RFM index. Plot the predicted probabilities by RFM index. Comment on the shape of the chart.
+```{r rfm}
+# Create RFM index
+bbb$rfm_index <- 100 * bbb$rec_iq + 10 * bbb$freq_iq + bbb$money_iq
+
+# Calculate "predicted" response rate by taking average 
+bbb$RFM_response <- ave(bbb$buyer, bbb$rfm_index)
+  
+ggplot(data = bbb, aes(x = as.factor(rfm_index), y = buyer)) + 
+  geom_bar(stat = "summary", fun = "mean")+ 
+  labs(title="% Buyers by RFM Index", 
+         x="RFM Index", y="% Buyer")
+```
+The shape of chart matches our expectation for the purchase probability versus RFM index and suggests that the model is good for prediction. The purchase probability generally follows a decreasing trend when the RFM index is larger and there is no obvious outlier in prediction. Also, there are noticeable probability differences between neighboring RFM indices.
+
+## Q6. Create a classification table based on the RFM-based predicted probabilities. Compared to the classification table in Q3, which model shows a better performance?
+```{r}
+prop.table(table(bbb$buyer, bbb$RFM_response > 0.5))
+```
+Because the average probability calculated from RFM analysis is all below 25%, the RFM model would classify all customers as non-buyers. The prediction accuracy of RFM is 90.96%, which is worse than the performance of the logistic regression model (92.62%).
+
+# Part III.
+## Q7. What is the breakeven response rate?
+```{r}
+(break_even <- 0.5 / (18-9-3))
+```
+The break-even response rate is 8.3%.
+
+## Q8. Using your logistic regression result, for the customers in the dataset, create a new variable (call it “target”) with a value of 1 if the customer’s predicted probability is greater than or equal to the breakeven response rate and 0 otherwise.
+```{r}
+bbb$target_logit <- as.integer((bbb$buyer_logit > break_even))
+```
+
+## Q9. Using your logistic regression result, compute the following numbers:
+```{r logit-return}
+# Percentage of customers that you are going to send a mail
+mean(bbb$target_logit)
+
+# buyer dummy for target group
+buyer_target_logit <- bbb[bbb$target_logit==1,]$buyer 
+# Average response rate among the customers you target
+describeBy(bbb$buyer, bbb$target_logit, mat=T, digits=4)
+(resp_rate_logit <- mean(buyer_target_logit))
+
+# Expected number of buyers
+mail_logit <- 500000 * mean(bbb$target_logit)
+(exp_buyer_logit <- mail_logit * resp_rate_logit)
+
+# Gross profit
+revenue_logit <- exp_buyer_logit * (18-9-3)
+cost_logit <- mail_logit * 0.5
+(profit_logit <- revenue_logit - cost_logit)
+
+# Gross sales
+18 * exp_buyer_logit
+
+# Total marketing cost
+cost_logit
+
+# Marketing ROI
+(ROI_logit <- profit_logit / cost_logit)
+```
+
+* Percentage of customers that you are going to send a mail: 31.1%
+* Average response rate among the customers you target: 21.36%
+* Expected number of buyers: 33,230
+* Gross profit: $121,580
+* Gross sales: $598,140
+* Total marketing cost: $77,800
+* Marketing ROI: 156.27%
+
+## Q10. Using your RFM result, compute the following numbers:
+```{r rfm-return}
+# Percentage of customers that you are going to send a mail
+bbb$target_rfm <- as.integer(bbb$RFM_response > break_even)
+mean(bbb$target_rfm)
+
+# buyer dummy for target group
+buyer_target_rfm <- bbb[bbb$target_rfm==1,]$buyer 
+# Average response rate among the customers you target
+(resp_rate_rfm <- mean(buyer_target_rfm))
+
+# Expected number of buyers
+mail_rfm <- 500000 * mean(bbb$target_rfm)
+(exp_buyer_rfm <- mail_rfm * resp_rate_rfm)
+
+# Gross profit
+revenue_rfm <- exp_buyer_rfm * (18-9-3)
+cost_rfm <- mail_rfm * 0.5
+(profit_rfm <- revenue_rfm - cost_rfm)
+
+# Gross sales
+18 * exp_buyer_rfm
+
+# Total marketing cost
+cost_rfm
+
+# Marketing ROI
+(ROI_rfm <- profit_rfm / cost_rfm)
+```
+* Percentage of customers that you are going to send a mail: 46.5%
+* Average response rate among the customers you target: 14.05%
+* Expected number of buyers: 32,700
+* Gross profit: $79,860
+* Gross sales: $588,600
+* Total marketing cost: $116,340
+* Marketing ROI: 68.64%
+
+## Q11. Compare the results of mass-marketing, RFM model and Logistic regression in terms of the performance measures you have calculated above.
+```{r mass-return}
+
+# Average response rate among the customers you target
+(resp_rate_mass <- mean(bbb$buyer))
+
+# Expected number of buyers
+mail_mass <- 500000
+(exp_buyer_mass <- mail_mass * resp_rate_mass)
+
+# Gross profit
+revenue_mass <- exp_buyer_mass * (18-9-3)
+cost_mass <- mail_mass * 0.5
+(profit_mass <- revenue_mass - cost_mass)
+
+# Gross sales
+18 * exp_buyer_mass
+
+# Total marketing cost
+cost_mass
+
+# Marketing ROI
+(ROI_mass <- profit_mass / cost_mass)
+```
+* Percentage of customers that you are going to send a mail: 100%
+* Average response rate among the customers you target: 9.04%
+* Expected number of buyers: 45,220
+* Gross profit: $21,320
+* Gross sales: $813,960
+* Total marketing cost: $250,000
+* Marketing ROI: 8.53%
+
+```{r}
+result <- data.frame(
+  "Expected response rate" = percent(c(resp_rate_mass, resp_rate_rfm, resp_rate_logit), accuracy = 0.01),
+  "Expected number of buyers" = c(exp_buyer_mass, exp_buyer_rfm, exp_buyer_logit),
+  "Gross profit" = c(profit_mass, profit_rfm, profit_logit),
+  "Total marketing cost" = c(cost_mass, cost_rfm, cost_logit),
+  "Marketing ROI" = c(ROI_mass, ROI_rfm, ROI_logit)
+  )
+row.names(result) <- c("Mass", "RFM", "Logit")
+result
+```
+
+We can conclude from the result table above that in general, the performance of Logistic regression model is better than mass marketing and the RFM model in this case study. The logistic regression model achieves the highest expected response rate, gross profit, and highest marketing ROI with the lowest marketing cost. Its marketing ROI is almost double of the ROI of the RFM model and much higher than the ROI of mass marketing. Although the mass marketing method has the highest expected number of buyers, the cost of marketing is too high and yields lower profit and ROI.
+
+
+## Q12 (Optional). Develop a decision tree model and compare the prediction accuracy using classification tables. How many trees do you keep to outperform logistic regression?
+```{r, message=FALSE}
+# load tree package (and MASS)
+library(tree)
+library(MASS)
+
+# Create training sample and test sample (randomly split 50%/50%)
+set.seed(1) # Fix a random draw seed
+train <- sample(1:nrow(bbb), nrow(bbb)/2)
+trainingdata <- bbb[train,]
+testdata <- bbb[-train,]
+```
+### Create a big tree with 10 variables
+```{r}
+bbb.tree <- tree(buyer ~ last + purch + total + gender + child + youth + cook + doit + reference + art, data=trainingdata, mindev=.001)
+
+# Plot the tree
+plot(bbb.tree, type="uniform")
+text(bbb.tree, col="blue", cex=.8)
+```
+
+
+### Prune the tree to have 9 leaves
+```{r}
+bbb.tree.prune = prune.tree(bbb.tree, best=9)
+
+# Plot the tree again
+plot(bbb.tree.prune, type="uniform")
+text(bbb.tree.prune, col="blue", label=c("yval"), cex=.8)
+```
+
+### Predict based on the test sample
+```{r}
+bbb.predict <- predict(bbb.tree.prune, testdata)
+
+# Classification matrix
+(table(testdata$buyer, bbb.predict>0.5))
+(bbb.tree.classify <- prop.table(table(testdata$buyer, bbb.predict>0.5)))
+
+percent(tr(bbb.tree.classify), accuracy = 0.01)
+```
+As shown above, if we use a decision tree model with 9 leaves, the prediction accuracy is 0.90420+0.00780 = 91.20%. I did some further experimentation to see whether increasing or decreasing the number of leaves will increase the accuracy rate (with n = 7, 10, 15, 20). When the number of leaves is lower than 6, the decision tree simply predict all customers as non-buyers, and the accuracy rate is 90.89%. If we further increase the number of leaves, the accuracy rates remain equal or even lower than 91.20%.
+
+The accuray is slightly worse than the performance of the logistic regression model (91.62% as calculated in Question 3). Therefore, we cannot outperform logistic regression.
+
+
+## Q13 (Optional). Develop a neural network model and compare the prediction accuracy using classification tables. How many neurons do you need to beat logistic regression?
+```{r, message=FALSE}
+# include the packages
+library(nnet)
+library(dplyr)
+library(tidyverse)
+library(ggpubr)
+library(stargazer)
+```
+
+### Apply a single-layer neural network with nnet package
+
+```{r}
+set.seed(3)
+## fit nnet (N neurons)
+nnetfit = nnet(buyer ~ last + purch + total + gender + child + youth + cook + doit + reference + art, data=trainingdata, size=2, decay=0.3, maxit=10000)
+#print(summary(nnetfit))
+
+# Predict response prob with nnet
+phat = predict(nnetfit, testdata, type="raw")
+
+# Classification table 
+(bbb.nnet.classify <- prop.table(table(testdata$buyer, phat>0.5)))
+tr(bbb.nnet.classify)
+```
+```{r}
+result.nnet <- data.frame(
+  "Number of neurons" = c(2, 3, 4, 5, 10, 15),
+  "Prediction accuracy" = percent(c(0.91636, 0.91596, 0.91596, 0.91636, 0.91532, 0.91532), accuracy=0.001)
+)
+result.nnet
+```
+
+The results suggest that the single-layer neural network model have the highest accuracy with lower number of neurons (2-5). This means that neural net with too many neurons will have more overfitting issues. The highest accuracy rate from neural network (91.636%) is slightly higher than the performance of logistic regression (91.62%). Therefore, we can conclude that a single-layer neural network with 2 neutrons can outperform logistic regression.

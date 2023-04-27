@@ -1,5 +1,5 @@
 ---
-title: "mgt556_hw4"
+title: "Predicting Response with Logistic Regression at BBB"
 author: "Xuejia Tong"
 date: "2023-02-26"
 output:
